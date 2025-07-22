@@ -4,7 +4,7 @@
 
 #define INITIAL_BUFFER_SIZE 128
 
-void search_in_file(FILE *fp, const char *searchterm) {
+void search_file(FILE *fp, const char *searchterm) {
     char *buffer = NULL;
     size_t line_length;
     size_t buffer_size = 0;
@@ -33,7 +33,7 @@ int main(int argc, char *argv[]) {
     if (argc == 2) {
         search_file(stdin, searchterm);
     }
-    
+
     // opens files in read mode if fails prints error message and exits with 1
     else {
         for (int i = 2; i < argc; i++) {
