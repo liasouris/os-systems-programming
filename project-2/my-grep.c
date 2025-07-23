@@ -11,7 +11,7 @@ void search_file(FILE *fp, const char *searchterm) {
     
     //Reads a line from the file stream getline automatically reallocates memory if line is longer than buffer
     while ((line_length = getline(&buffer, &buffer_size, fp)) != -1) {
-        //check if search term exits in the line case-sensitive
+        //check if search term exits in the line (case-sensitive)
         if (strstr(buffer, searchterm) != NULL) {
             printf("%s", buffer);
         }
@@ -21,7 +21,7 @@ void search_file(FILE *fp, const char *searchterm) {
 }
 
 int main(int argc, char *argv[]) {
-    // checks is atleats oen argument is provided if no command line arguments given exits with 1 
+    // checks if atleast one argument is provided if no command line arguments given exits with 1 
     if (argc < 2) {
         fprintf(stderr, "my-grep: searchterm [file ...]\n");
         exit(1);
