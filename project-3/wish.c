@@ -3,107 +3,164 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/wait.h>
-#include <sys/types.h>
-#include <errno.h> 
+#include <fcntl.h>
 
 #define MAX_LINE 1024 // max command line length 1024 char
-#define MAX_ARGS 64 // max arguments 64 tokens
+#define MAX_ARGS 64 // max arguments per command
+#define MAX_CMDS 10 //max parallel commands
+#define MAX_PATHS 10 // max diretories in serach path
 
-void execute_command(char **args) {
-    pid_t pid = fork(); // creates new process
-    
-    if (pid == 0) { // child process
-        execv(args[0], args);
-        // if execv fails then returns error message
+char *paths[MAX_PATHS] = {"/bin"};// default search path
+int path_count = 1; // current path count
+
+void execute_commands(char **args, int redirect, char *file) {
+    pid_t pid = fork(); // creates child process
+    if (pid == 0) {
+        // handles the output redirection if its specified
+        if (redirect) {
+            int fd = open(file, O_WRONLY|O_CREAT|O_TRUNC, 0644);
+            //redirects both standard output and standard error to the specified file
+            dup2(fd, STDOUT_FILENO); 
+            dup2(fd, STDERR_FILENO);
+            close(fd);
+        }
+        // tries executing command in each path directory
+        for (int i = 0; i < path_count; i++) {
+            char full_path[256];
+            snprintf(full_path, sizeof(full_path), "%s/%s", paths[i], args[0]);
+            execv(full_path, args);
+        }
+        // if execv return then command wasnt found
         fprintf(stderr, "An error has occurred\n");
         exit(1);
-    } else if (pid > 0) { // parent process
-        wait(NULL); 
-    } else {
-        fprintf(stderr, "An error has occurred\n");
     }
 }
-// program can run in the two modes interactive or batch mode if a file is given in argument
+
+void parallel_commands(char *line) {
+    char *commands[MAX_CMDS][MAX_ARGS]; // array to hold the parsed argument for each command
+    int cmd_count = 0; // parsed commands count
+    char *saveptr;
+    
+    // first splits the input line using the "&" as seprator to get each command
+    char *cmd_str = strtok_r(line, "&", &saveptr);
+    while (cmd_str && cmd_count < MAX_CMDS) {
+        // skips the white spaces
+        while (*cmd_str == ' ' || *cmd_str == '\t') cmd_str++;
+        //if command is empty show error
+        if (*cmd_str == '\0') {
+            fprintf(stderr, "An error has occurred\n");
+            return;
+        }
+
+        // splits the comamnd into arguments using space as separator
+        int arg_count = 0;
+        char *token = strtok(cmd_str, " \t");
+        while (token && arg_count < MAX_ARGS-1) {
+            commands[cmd_count][arg_count++] = token;
+            token = strtok(NULL, " \t");
+        }
+        
+        // no valid argument found shows error
+        if (arg_count == 0) {
+            fprintf(stderr, "An error has occurred\n");
+            return;
+        }
+         // adds NULL at the end of the arguments list so execv knows where the list ends
+        commands[cmd_count][arg_count] = NULL;
+        cmd_count++;
+        //moves to the next command in the input line
+        cmd_str = strtok_r(NULL, "&", &saveptr);
+    }
+
+    pid_t pids[MAX_CMDS]; // array keeps track of the child pids
+    int pid_count = 0;
+    // forks a new child process for each parsed comamnd
+    for (int i = 0; i < cmd_count; i++) {
+        if (!commands[i][0]) continue; // skipped if command empty
+        
+        pids[pid_count++] = fork(); // create new child process
+
+        if (pids[pid_count-1] == 0) {
+            execute_command(commands[i], 0, NULL); // executes without redirection
+            exit(0);
+        }
+    }
+
+    // waits for all child processes to be complete
+    for (int i = 0; i < pid_count; i++) {
+        waitpid(pids[i], NULL, 0);
+    }
+}
+
 int main(int argc, char *argv[]) {
     char line[MAX_LINE];
-    char *args[MAX_ARGS];
-    FILE *input = stdin;
-    
-    // checks for batch mode
-    if (argc > 2) { // too many arguments
-    fprintf(stderr, "An error has occurred\n");
-    exit(1);
-} else if (argc == 2) {
-    input = fopen(argv[1], "r"); // open file in read mode
-    if (input == NULL) {
-        fprintf(stderr, "cannot open '%s': %s\n", argv[1], strerror(errno));
-        exit(1);
+    // sets input source (stdin or batch file)
+    FILE *input = argc == 2 ? fopen(argv[1], "r") : stdin;
+    // checks for invalid arguments
+    if (argc > 2 || (argc == 2 && !input)) {
+        fprintf(stderr, "An error has occurred\n");
+        return 1;
     }
-}
-    
-    //main shell loop in interactive mode shows a prompt
+    // main shell loop
     while (1) {
-        if (input == stdin) {
-            printf("wish> ");
-            fflush(stdout);
-        }
+        // prints the prompt wish> in interactive mode
+        if (input == stdin) printf("wish> "), fflush(stdout);
+
+        if (!fgets(line, MAX_LINE, input)) break;
         
-        if (fgets(line, MAX_LINE, input) == NULL) {
-            if (feof(input)) {
-                exit(0); // end of file exit
-            } else {
-                fprintf(stderr, "An error has occurred\n");
-                continue;
+        // removes new line and skips empty ones
+        line[strcspn(line, "\n")] = 0;
+        if (!line[0]) continue;
+
+        // checks for parallel commands
+        if (strchr(line, '&')) {
+            parallel_commands(line);
+            continue;
+        }
+
+        // handles single commands
+        char *args[MAX_ARGS], *token = strtok(line, " \t");
+        int i = 0, redirect = 0;
+        char *file = NULL;
+        
+        // tokenize command and argument
+        while (token && i < MAX_ARGS-1) {
+            if (!strcmp(token, ">")) {
+                if (!(file = strtok(NULL, " \t")) || strtok(NULL, " \t")) {
+                    fprintf(stderr, "An error has occurred\n");
+                    goto next;
+                }
+                redirect = 1;
+                break;
             }
-        }
-        
-        // clean up removes new line 
-        line[strcspn(line, "\n")] = '\0';
-        
-        // tokenizes input
-        char *token = strtok(line, " ");
-        int i = 0;
-        while (token != NULL && i < MAX_ARGS - 1) {
             args[i++] = token;
-            token = strtok(NULL, " ");
+            token = strtok(NULL, " \t");
         }
-        args[i] = NULL;
-        
-        // empty command handling
-        if (args[0] == NULL) {
-            continue;
+        args[i] = NULL; // NULL terminate arguments
+
+        if (!args[0]) continue;
+
+        // handles all the built-in commands
+        if (!strcmp(args[0], "exit")) {
+            if (args[1]) fprintf(stderr, "An error has occurred\n");
+            else return 0;
+        } 
+        else if (!strcmp(args[0], "cd")) {
+            if (!args[1] || args[2] || chdir(args[1])) 
+                fprintf(stderr, "An error has occurred\n");
+        } 
+        else if (!strcmp(args[0], "path")) {
+            path_count = i-1; // updates the path count
+            for (int j = 0; j < path_count; j++)
+                paths[j] = args[j+1];
         }
-        
-        // build in commands
-        if (strcmp(args[0], "exit") == 0) {
-            if (args[1] != NULL) {
-                fprintf(stderr, "An error has occurred\n");
-                continue;
-            }
-            exit(0);
-        } else if (strcmp(args[0], "cd") == 0) {
-            if (args[1] == NULL || args[2] != NULL) {
-                fprintf(stderr, "An error has occurred\n");
-                continue;
-            }
-            if (chdir(args[1]) != 0) {
-                fprintf(stderr, "An error has occurred\n");
-            }
-            continue;
-        } else if (strcmp(args[0], "path") == 0) {
-            // path implementation **to be edited**
-            printf("Path command received\n");
-            continue;
+        else {
+            // executes external command
+            if (!path_count) fprintf(stderr, "An error has occurred\n");
+            else execute_command(args, redirect, file);
+            if (redirect) wait(NULL);
         }
-        
-        // if command is not built-in, it assumes the executable is in /bin/
-        // prepends /bin/ to the command and then tries to then run it
-        char full_path[256];
-        snprintf(full_path, sizeof(full_path), "/bin/%s", args[0]);
-        args[0] = full_path;
-        
-        execute_command(args);
+        next:;
     }
-    
     return 0;
 }
