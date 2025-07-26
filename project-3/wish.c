@@ -19,6 +19,10 @@ void execute_commands(char **args, int redirect, char *file) {
         // handles the output redirection if its specified
         if (redirect) {
             int fd = open(file, O_WRONLY|O_CREAT|O_TRUNC, 0644);
+            if (fd == -1) {
+                fprintf(stderr, "An error has occured\n");
+                exit(1);
+            }
             //redirects both standard output and standard error to the specified file
             dup2(fd, STDOUT_FILENO); 
             dup2(fd, STDERR_FILENO);
@@ -33,6 +37,13 @@ void execute_commands(char **args, int redirect, char *file) {
         // if execv return then command wasnt found
         fprintf(stderr, "An error has occurred\n");
         exit(1);
+
+    } else if (pid > 0) {
+        //waits for child process to finish
+        waitpid(pid, NULL, 0);
+    } else {
+        // fork failed
+        fprintf(stderr, "An error has occured\n");
     }
 }
 
@@ -150,15 +161,18 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "An error has occurred\n");
         } 
         else if (!strcmp(args[0], "path")) {
-            path_count = i-1; // updates the path count
-            for (int j = 0; j < path_count; j++)
-                paths[j] = args[j+1];
+             path_count = 0;
+             for (int j = 1; args[j]; j++) {
+                 if (path_count < MAX_PATHS) {
+                     paths[path_count++] = args[j];
+                }
+            }        
         }
+
         else {
             // executes external command
             if (!path_count) fprintf(stderr, "An error has occurred\n");
             else execute_commands(args, redirect, file);
-            if (redirect) wait(NULL);
         }
         next:;
     }
