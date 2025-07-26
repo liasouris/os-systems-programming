@@ -81,7 +81,7 @@ void parallel_commands(char *line) {
         pids[pid_count++] = fork(); // create new child process
 
         if (pids[pid_count-1] == 0) {
-            execute_command(commands[i], 0, NULL); // executes without redirection
+            execute_commands(commands[i], 0, NULL); // executes without redirection
             exit(0);
         }
     }
@@ -157,7 +157,7 @@ int main(int argc, char *argv[]) {
         else {
             // executes external command
             if (!path_count) fprintf(stderr, "An error has occurred\n");
-            else execute_command(args, redirect, file);
+            else execute_commands(args, redirect, file);
             if (redirect) wait(NULL);
         }
         next:;
